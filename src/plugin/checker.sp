@@ -10,9 +10,11 @@ int gB_PDeaths[MAXPLAYERS + 1] = 0;
 int gB_PShots[MAXPLAYERS + 1] = 0;
 int gB_PHits[MAXPLAYERS + 1] = 0;
 int gB_PHS[MAXPLAYERS + 1] = 0;
-int gB_PAssists[MAXPLAYERS + 1] = 0;
 int gB_PlayTime[MAXPLAYERS + 1] = 0;
-
+char gB_PSteamID64[32];
+char gB_ESteamID64[32];
+char gB_Map[64];
+int gB_MatchKey = 0;
 bool gB_activeMatch = false;
 
 public Plugin myinfo = {
@@ -30,12 +32,14 @@ public void OnPluginStart()
         HookEvent("player_death", Event_PlayerDeath);
         HookEvent("weapon_fire", Event_WeaponFire);
         HookEvent("player_hurt", Event_PlayerHurt);
+        HookEvent("client_disconnect", Event_PlayerDisconnect);
         HookEvent("cs_win_panel_match", Event_End); // End of match -> shutdown
 
         for(int i = 0; i <= MaxClients; i++)
         {
             if(IsValidClient(i))
             {
+                GetCurrentMap(gB_Map, 64);
                 OnClientPutInServer(i);
             }
         }
@@ -47,6 +51,11 @@ public void OnPluginStart()
         SetFailState("[Checker] Error on start. Deactivate Plugin no DB Connection!");
     }
 }
+
+public Action Event_PlayerDisconnect(Handle event, const char[] name, bool dontBroadcast)
+{
+    // TODO
+} 
 
 public Action CheckPlayerCount(Handle timer)
 {
@@ -68,7 +77,7 @@ public Action LoadExec(Handle timer)
 
 public Action Event_End(Event event, const char[] name, bool dontBroadcast)
 {
-    PrintToChatAll("Server shutting down in 5 seconds...");
+    PrintToChatAll("Server shutting down in 10 seconds...");
     CreateTimer(10.0, Shutdown);
 }
 
@@ -101,7 +110,6 @@ public void Event_PlayerDeath(Event e, const char[] name, bool dontBroadcast)
     int client = GetClientOfUserId(GetEventInt(e, "userid"));
     int attacker = GetClientOfUserId(GetEventInt(e, "attacker"));
     bool headshot = GetEventBool(e, "headshot");
-    int assister = GetClientOfUserId(GetEventInt(e, "assister"));
 
     if(!IsValidClient(client) || !IsValidClient(attacker))
     {
@@ -118,9 +126,6 @@ public void Event_PlayerDeath(Event e, const char[] name, bool dontBroadcast)
     gB_PDeaths[client]++;
     if(headshot)
         gB_PHS[attacker]++;
-
-    if(assister)
-        gB_PAssists[assister]++;
 }
 
 public void Event_RoundEnd(Event e, const char[] name, bool dontBroadcast)
@@ -169,7 +174,7 @@ public void SQL_StartConnection()
     }
 
     // Match details
-    FormatEx(gB_Query, 512, "CREATE TABLE IF NOT EXISTS `matchdetails` (`matchid` INT NOT NULL AUTO_INCREMENT, `map` VARCHAR(32) NOT NULL, `user1` VARCHAR(17) NOT NULL, `user2` VARCHAR(17) NOT NULL, `user1_headshots` INT NOT NULL DEFAULT 0, `user2_headshots` INT NOT NULL DEFAULT 0, `user1_shots` INT NOT NULL DEFAULT 0, `user2_shots` INT NOT NULL DEFAULT 0, `user1_deaths` INT NOT NULL DEFAULT 0, `user2_deaths` INT NOT NULL DEFAULT 0, `user1_kills` INT NOT NULL DEFAULT 0, `user2_kills` INT NOT NULL DEFAULT 0, `user1_seconds` INT NOT NULL DEFAULT 0, `user2_seconds` INT NOT NULL DEFAULT 0, `winner` VARCHAR(17) NOT NULL, PRIMARY KEY (`matchid`))");
+    FormatEx(gB_Query, 1024, "CREATE TABLE IF NOT EXISTS `matchdetails` (`matchid` INT NOT NULL AUTO_INCREMENT, `map` VARCHAR(32) NOT NULL, `user` VARCHAR(17) NOT NULL, `headshots` INT NOT NULL DEFAULT 0, `hits` INT NOT NULL DEFAULT 0, `shots` INT NOT NULL DEFAULT 0, `deaths` INT NOT NULL DEFAULT 0, `kills` INT NOT NULL DEFAULT 0, `seconds` INT NOT NULL DEFAULT 0, `winner` VARCHAR(17), PRIMARY KEY (`matchid`))");
     if(!SQL_FastQuery(gB_DBSQL, gB_Query))
     {
         SQL_GetError(gB_DBSQL, gB_Error, 255);
@@ -177,8 +182,26 @@ public void SQL_StartConnection()
     }
 }
 
-public void SQL_InsertMatch_Callback(Database db, DBResultSet results, const char[] error, any data) {
+public void SQL_InsertMatch_Callback(Database db, DBResultSet results, const char[] error, any data)
+{
+    // Get primary key
+    int client = GetClientFromSerial(data);
+    char gB_Query[512];
+    FormatEx(gB_Query, 512, "SELECT (matchid) FROM `matchdetails` WHERE user = '%s' AND map = '%s' AND winner IS NULL;", gB_PSteamID64, gB_Map);
+    PrintToChatAll(gB_Query);
+    gB_DBSQL.Query(SQL_GetPrimaryKey_Callback, gB_Query, GetClientSerial(client), DBPrio_Normal);
+}
 
+public void SQL_GetPrimaryKey_Callback(Database db, DBResultSet results, const char[] error, any data)
+{
+    if(results == null) {
+        LogError("[Checker] Selecting match id error. Reason: %s", error);
+    }
+
+    // Set primary key
+    while(results.FetchRow()){
+        gB_MatchKey = results.FetchInt(0);
+    }
 }
 
 public void Event_PlayerHurt(Event e, const char[] name, bool dontBroadcast)
@@ -191,12 +214,17 @@ public void Event_PlayerHurt(Event e, const char[] name, bool dontBroadcast)
         return;
     }
 
+    if(!GetClientAuthId(attacker, AuthId_SteamID64, gB_ESteamID64, 32))
+    {
+        KickClient(client, "Verification problem , please reconnect.");
+        return;
+    }
+
     int gB_ClientTeam = GetClientTeam(client);
     int gB_AttackerTeam = GetClientTeam(attacker);
 
     if(gB_ClientTeam != gB_AttackerTeam)
     {
-        //Player Stats//
         gB_PHits[attacker]++;
     }
 }
@@ -222,20 +250,18 @@ public void OnClientPutInServer(int client)
     gB_PShots[client] = 0;
     gB_PHits[client] = 0;
     gB_PHS[client] = 0;
-    gB_PAssists[client] = 0;
     gB_PlayTime[client] = 0;
 
     char gB_PlayerName[MAX_NAME_LENGTH];
     GetClientName(client, gB_PlayerName, MAX_NAME_LENGTH);
 
-    char gB_SteamID64[32];
-    if(!GetClientAuthId(client, AuthId_SteamID64, gB_SteamID64, 32))
+    if(!GetClientAuthId(client, AuthId_SteamID64, gB_PSteamID64, 32))
     {
         KickClient(client, "Verification problem , please reconnect.");
         return;
     }
 
-    //escaping name , dynamic array;
+    // escaping name, dynamic array;
     int iLength = ((strlen(gB_PlayerName) * 2) + 1);
     char[] gB_EscapedName = new char[iLength];
     gB_DBSQL.Escape(gB_PlayerName, gB_EscapedName, iLength);
@@ -246,8 +272,15 @@ public void OnClientPutInServer(int client)
     char gB_Query[512];
 
     // Set user details
-    FormatEx(gB_Query, 512, "INSERT INTO `users` (`steamid`, `name`, `ip`) VALUES ('%s', '%s', '%s') ON DUPLICATE KEY UPDATE `name` = '%s', `ip` = '%s';", gB_SteamID64, gB_EscapedName, gB_ClientIP, gB_EscapedName, gB_ClientIP);
+    FormatEx(gB_Query, 512, "INSERT INTO `users` (`steamid`, `name`, `ip`) VALUES ('%s', '%s', '%s') ON DUPLICATE KEY UPDATE `name` = '%s', `ip` = '%s';", gB_PSteamID64, gB_EscapedName, gB_ClientIP, gB_EscapedName, gB_ClientIP);
     gB_DBSQL.Query(SQL_InsertPlayer_Callback, gB_Query, GetClientSerial(client), DBPrio_Normal);
+
+    // Set matchdetails for current user
+    // If both are on the server start creating statistics (TODO: CHECK IF WORKING)
+    if (gB_activeMatch) {
+        FormatEx(gB_Query, 512, "INSERT INTO `matchdetails` (`map`, `user`) VALUES ('%s', '%s');", gB_Map, gB_PSteamID64);
+        gB_DBSQL.Query(SQL_InsertMatch_Callback, gB_Query, GetClientSerial(client), DBPrio_Normal);
+    }
 }
 
 public void SQL_InsertPlayer_Callback(Database db, DBResultSet results, const char[] error, any data)
@@ -278,8 +311,7 @@ stock bool IsValidClient(int client, bool alive = false, bool bots = false)
 
 public void UpdatePlayer(int client, float timeonserver)
 {
-    char gB_SteamID64[32];
-    if(!GetClientAuthId(client, AuthId_SteamID64, gB_SteamID64, 32))
+    if(!GetClientAuthId(client, AuthId_SteamID64, gB_PSteamID64, 32) && !gB_activeMatch)
     {
         return;
     }
@@ -288,8 +320,8 @@ public void UpdatePlayer(int client, float timeonserver)
 
     char gB_Query[512];
 
-    // Set matchdetails for current user
-    FormatEx(gB_Query, 512, "UPDATE `matchdetails` SET `kills`= %d,`deaths`= %d,`shots`= %d,`hits`= %d,`headshots`= %d,`assists`= %d, `secsonserver` = secsonserver + %d WHERE `steamid` = '%s';", gB_PKills[client], gB_PDeaths[client], gB_PShots[client], gB_PHits[client], gB_PHS[client], gB_PAssists[client], gB_Seconds, gB_SteamID64);
+    // Update matchdetails for current match
+    FormatEx(gB_Query, 512, "UPDATE `matchdetails` SET `kills`= %d,`deaths`= %d,`shots`= %d,`hits`= %d,`headshots`= %d, `seconds` = seconds + %d WHERE `matchid` = %d;", gB_PKills[client], gB_PDeaths[client], gB_PShots[client], gB_PHits[client], gB_PHS[client], gB_Seconds, gB_MatchKey);
     gB_DBSQL.Query(SQL_UpdatePlayer_Callback, gB_Query, GetClientSerial(client), DBPrio_Normal);
 }
 

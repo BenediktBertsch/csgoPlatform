@@ -14,6 +14,8 @@ Optional:
 
 - WS_COLLECTION (Mappool, default is mine: 1809672996 - [More information](https://developer.valvesoftware.com/wiki/CSGO_Workshop_For_Server_Operators))
 
+- PORTSTART (sets the start number for ex. 27016 and counts up to the many servers you have)
+
 To get statistics working (You need a MySQL Server):
 - db_Host
 - db_Name

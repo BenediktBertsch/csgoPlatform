@@ -19,6 +19,7 @@ var inUsePorts []string
 var AuthKey string
 var InstallDir string
 var WS_Collection string
+var PortStart string
 
 // Entrypoint to add server
 func AddServer(data Server) {
@@ -60,6 +61,9 @@ func collect(data Server) {
 		if !ready && msg == "ready" {
 			log.Printf("Status %s: %s\n", data.Name, msg)
 			ready = true
+		} else if msg == "error" {
+			log.Printf("Status %s: %s\n", data.Name, msg + ", check your servertokens for expiration dates: https://steamcommunity.com/dev/managegameservers")
+			ready = false
 		} else if msg == "stopped" {
 			log.Printf("Status %s: %s\n", data.Name, msg)
 			ready = false
@@ -102,7 +106,6 @@ func start(data Server) {
 	if err != nil {
 		data.Channel <- "Could not start:" + err.Error()
 	} else {
-
 		// Read stream (srcds console)
 		buf := bufio.NewReader(stdout)
 		f, err := os.OpenFile("/home/admin/"+data.Name+".log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, fs.ModePerm)
@@ -124,6 +127,12 @@ func start(data Server) {
 				data.Channel <- "ready"
 			}
 
+			// Check if server is up
+			if strings.Contains(string(line), "FATAL ERROR") {
+				data.Channel <- "error"
+			}
+
+			
 			// Check if server is down
 			if strings.Contains(string(line), "Server Quit") {
 				data.Channel <- "stopped"
@@ -135,6 +144,7 @@ func start(data Server) {
 }
 
 func removeServer(data Server) {
+	// Delete folder
 	entries, err := ioutil.ReadDir(InstallDir + "../")
 	if err != nil {
 		log.Panicf("Failed reading directory: %s", err)
@@ -154,6 +164,32 @@ func removeServer(data Server) {
 			}
 		}
 	}
+
+	// Remove GSLT Key and Port (inuse)
+	deleteInUse(true, data.GSLT)
+	deleteInUse(false, data.Port)
+}
+
+func deleteInUse(typ bool, value interface{}) {
+	// type true -> GSLT else Port
+	index := 0
+	if typ {
+		for _, i := range inUseGSLTS {
+			if i == value {
+				inUseGSLTS[index] = i
+				index++
+			}
+		}
+		inUseGSLTS = inUseGSLTS[:index]
+	} else {
+		for _, i := range inUsePorts {
+			if i == value {
+				inUsePorts[index] = i
+				index++
+			}
+		}
+		inUsePorts = inUsePorts[:index]
+	}
 }
 
 type Server struct {
@@ -166,7 +202,7 @@ type Server struct {
 
 type ServerStatus struct {
 	Name   string
-	MapId    string
+	MapId  string
 	IP     string
 	Port   int
 	Status string

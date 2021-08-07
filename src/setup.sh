@@ -69,12 +69,14 @@ echo '
 # Create .env file
 echo 'GSLTS="'${GSLTS}'"
 AUTHKEY="'${AUTHKEY}'"
-WS_COLLECTION="'${WS_COLLECTION}'"
+WS_COLLECTION="'${WS_COLLECTION}'
+PORTSTART="'${PORTSTART}'"
 ' > ${APPDIR}/.env
 
-# Move server.cfg
+# Copy server.cfg
 cd ${HOME}/csgo-base/csgo/cfg
-mv -f ${APPDIR}/plugin/server.cfg server.cfg
+test -f server.cfg && rm server.cfg
+cp ${APPDIR}/plugin/server.cfg server.cfg
 
 # Starting API
 echo "Finished, starting Webserver..."

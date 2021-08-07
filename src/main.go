@@ -77,7 +77,8 @@ func main() {
 	serverHandler.InstallDir = os.Getenv("HOME") + "/csgo-base/"
 	serverHandler.AuthKey = os.Getenv("AUTHKEY")
 	serverHandler.WS_Collection = os.Getenv("WS_COLLECTION")
-
+	serverHandler.PortStart = os.Getenv("PORTSTART")
+	
 	// Delete all files of active sessions before
 	utils.CleanUp(serverHandler.InstallDir + "../")
 
